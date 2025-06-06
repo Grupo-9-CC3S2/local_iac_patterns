@@ -16,7 +16,7 @@ Utiliza para esta actividad el siguiente [proyecto](https://github.com/kapumota/
    python -m venv .venv && source .venv/bin/activate
    pip install --upgrade pip
    ```
-   ![Configuración del entorno virtual](./imagenes/creacion_entorno.jpg)
+   ![Configuración del entorno virtual](./Imagenes/creacion_entorno.jpg)
 
 2. **Genera** la infraestructura base y valida:
 
@@ -27,9 +27,9 @@ Utiliza para esta actividad el siguiente [proyecto](https://github.com/kapumota/
    terraform validate
    ```
 
-      ![Generación de la infraestructura](./imagenes/generacion_infraestructura.jpg)
+      ![Generación de la infraestructura](./Imagenes/generacion_infraestructura.jpg)
 3. **Inspecciona** `terraform/main.tf.json` para ver los bloques `null_resource` generados.
-   ![Inspeccion](./imagenes/inspeccion.jpg)
+   ![Inspeccion](./Imagenes/inspeccion.jpg)
    Se muestra el JSON generado por `generate_infra.py`. Se creó el arreglo de objetos `resource`, que dentro de este tenemos en total 15 objetos `null_resource` que tienen la misma estructura a excepción del ultimo que es el `finalizador`, que indica que se terminó la generación de la flota.
 
 #### Fase 1: Exploración y análisis
