@@ -1,2 +1,4 @@
 *terraform
 *__pycache__
+#Ignorar el entorno virtual de Python
+.venv/
