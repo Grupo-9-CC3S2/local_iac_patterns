@@ -155,7 +155,7 @@ Dentro de Terraform, triggers en un null_resource sirven para:
 
 - `timestamp`: Fecha y hora exacta (UTC) en que se generó el recurso, registrando cuándo se corrió la fábrica.
 
-![Diagrama de patron Factory](./imagenes/uml-factory.jpg)
+![Diagrama de patron Factory](./Imagenes/uml-factory.jpg)
 
 #### 3. Prototype
 
@@ -202,7 +202,7 @@ class ResourcePrototype:
 
     - Reutilización: el mismo `ResourcePrototype` puede producir múltiples instancias diferenciadas, aplicando mutators distintos.
 
-![Diagrama de patron Prototype](./imagenes/uml-protoype.jpg)
+![Diagrama de patron Prototype](./Imagenes/uml-protoype.jpg)
 
 `ResourcePrototype` almacena un atributo `template` (el prototipo original).
 
@@ -254,7 +254,7 @@ class CompositeModule:
 
     - Esto simula la sintaxis HCL en la que podrías tener varios bloques `resource "null_resource"` `"app_0" { … }` uno tras otro.
 
-![Diagrama de patron Composite](./imagenes/uml-composite.jpg)
+![Diagrama de patron Composite](./Imagenes/uml-composite.jpg)
 
 - CompositeModule tiene un atributo privado children que es una lista de Dict.
 
