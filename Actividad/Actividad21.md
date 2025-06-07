@@ -30,6 +30,7 @@ Utiliza para esta actividad el siguiente [proyecto](https://github.com/kapumota/
       ![Generación de la infraestructura](./Imagenes/generacion_infraestructura.jpg)
 3. **Inspecciona** `terraform/main.tf.json` para ver los bloques `null_resource` generados.
    ![Inspeccion](./Imagenes/inspeccion.jpg)
+   
    Se muestra el JSON generado por `generate_infra.py`. Se creó el arreglo de objetos `resource`, que dentro de este tenemos en total 15 objetos `null_resource` que tienen la misma estructura a excepción del ultimo que es el `finalizador`, que indica que se terminó la generación de la flota.
 
 #### Fase 1: Exploración y análisis
@@ -63,6 +64,38 @@ class ConfigSingleton(metaclass=SingletonMeta):
 
 * **Tarea**: Explica cómo `SingletonMeta` garantiza una sola instancia y el rol del `lock`.
 
+`SingletonMeta` lo que hace es primero un registro de instancias:
+- `_instances`: diccionario privado que guarda, para cada clase, su única instancia creada.  
+- Al invocar `ConfigSingleton("dev")`, se llama internamente a `SingletonMeta.__call__`.
+
+Luego se hace un chequeo antes de crear:
+Dentro de `__call__` se comprueba:
+
+```python
+if cls not in cls._instances:
+    # crea nueva instancia y la guarda en _instances[cls]
+```
+- Si la clase no existe en `_instances`, se crea la instancia y se almacena.
+
+- Si ya existe, se devuelve directamente la instancia existente sin volver a llamar a `__init__`.
+
+El rol de lock `_lock` es un candado `(threading.Lock)` que envuelve toda la comprobación y posible creación:
+```python
+with cls._lock:
+    # sección crítica: comprobar y crear
+```
+- Impide que dos hilos entren al mismo tiempo y creen dos objetos distintos.
+
+- El primer hilo crea y guarda la instancia; el segundo encuentra la entrada en _instances y la reutiliza.
+
+![Diagrama de patron Singleton](./Imagenes/uml-singleton.jpg)
+
+- ConfigSingleton es la clase a la que queremos aplicar el patrón Singleton.
+
+- SingletonMeta es su metaclase, el controla cómo se crean las clases, y aquí intercepta toda llamada de instanciación.
+
+La flecha punteada con estereotipo <<metaclass>> indica precisamente esa relación: “ConfigSingleton fue creado usando SingletonMeta como metaclase”.
+
 #### 2. Factory
 
 ```python
@@ -88,6 +121,42 @@ class NullResourceFactory:
 
 * **Tarea**: Detalla cómo la fábrica encapsula la creación de `null_resource` y el propósito de sus `triggers`.
 
+**Encapsulamiento de la creación**
+- Método estático
+`create(...)` puede llamarse sin instanciar `NullResourceFactory`, lo que simplifica su uso desde cualquier parte del código.
+
+- Responsabilidad única
+Toda la lógica de construcción del bloque Terraform JSON para un `null_resource` queda aquí, en lugar de repartirse por varios módulos o scripts. Así:
+```python
+base = NullResourceFactory.create("app")
+# base → 
+# {
+#   "resource": {
+#     "null_resource": {
+#       "app": { "triggers": { … } }
+#     }
+#   }
+# }
+```
+**Desacoplamiento**
+
+Otros componentes (Prototype, Builder, Composite…) no necesitan conocer detalles de `uuid` ni de formato de timestamp: sólo llaman a `create(name)` y obtienen un bloque listo para usar.
+
+**Propósito de los triggers**
+
+Dentro de Terraform, triggers en un null_resource sirven para:
+
+1. **Forzar recreación**
+- Si cambias cualquiera de los valores en el mapa triggers, Terraform detecta una diferencia con la ejecución anterior y volverá a “apply” el recurso.
+
+2. **Metadatos de generación**
+
+- `factory_uuid`: Un UUID único por llamada a fábrica, que permite agrupar todos los recursos creados en esa misma ejecución.
+
+- `timestamp`: Fecha y hora exacta (UTC) en que se generó el recurso, registrando cuándo se corrió la fábrica.
+
+![Diagrama de patron Factory](./imagenes/uml-factory.jpg)
+
 #### 3. Prototype
 
 ```python
@@ -106,6 +175,38 @@ class ResourcePrototype:
 ```
 
 * **Tarea**: Dibuja un diagrama UML del proceso de clonación profunda y explica cómo el **mutator** permite personalizar cada instancia.
+
+1. **Propósito del patrón Factory**
+
+    Permitir la creación de nuevos objetos a partir de una “plantilla” existente, sin conocer los detalles internos de construcción.
+
+2. **Flujo de clonación**
+
+    - Se guarda en `self.template` un diccionario que representa un bloque Terraform básico (p. ej. el JSON devuelto por la fábrica).
+
+    - Al llamar a `clone(mutator` primero se realiza un deep copy, garantizando que la copia es totalmente independiente de la plantilla original.
+
+    - Luego se aplica la función `mutator`, que recibe el diccionario clonado y puede:
+
+        - Renombrar recursos
+
+        - Ajustar triggers
+
+        - Añadir bloques adicionales (por ejemplo, un bloque `local_file`)
+
+    Finalmente se retorna la copia modificada, lista para integrarse en el módulo Composite.
+
+3. **Ventajas**
+
+    - Desacoplamiento: no hay lógica de “nombres” o “índices” dentro de la clase, solo un punto de extensión `(mutator)`.
+
+    - Reutilización: el mismo `ResourcePrototype` puede producir múltiples instancias diferenciadas, aplicando mutators distintos.
+
+![Diagrama de patron Prototype](./imagenes/uml-protoype.jpg)
+
+`ResourcePrototype` almacena un atributo `template` (el prototipo original).
+
+El método `clone()` toma un `mutator` (una función que modifica el bloque) y devuelve una copia independiente.
 
 #### 4. Composite
 
@@ -130,6 +231,36 @@ class CompositeModule:
 ```
 
 * **Tarea**: Describe cómo `CompositeModule` agrupa múltiples bloques en un solo JSON válido para Terraform.
+
+1. **Agregación de bloques**
+
+    - El atributo `children` es una lista donde se acumulan múltiple bloques de recurso (cada uno es un dict con la clave `"resource"`).
+
+    - El método `add(block)` recibe uno de estos bloques y lo añade a la lista.
+
+2. **Exportación unificada**
+
+    - En `export()`, se crea un dict inicial `{"resource": {}}`.
+
+    - Luego se itera sobre cada `child`:
+
+        - Se extrae el tipo de recurso (`rtype`, p. ej. `"null_resource"` o `"module"`).
+
+        - Se obtiene el mapa de recursos bajo ese tipo y se fusiona en el `merged`, usando `update()` para combinar varios nombres de recurso sin colisionar.
+
+3. **Resultado**
+
+    - El JSON resultante es un único objeto con todos los recursos agrupados por tipo.
+
+    - Esto simula la sintaxis HCL en la que podrías tener varios bloques `resource "null_resource"` `"app_0" { … }` uno tras otro.
+
+![Diagrama de patron Composite](./imagenes/uml-composite.jpg)
+
+- CompositeModule tiene un atributo privado children que es una lista de Dict.
+
+- El método add() añade un Dict a esa lista.
+
+- El método export() recorre children para generar un único Dict de salida.
 
 #### 5. Builder
 
@@ -162,7 +293,46 @@ class InfrastructureBuilder:
 
 * **Tarea**: Explica cómo `InfrastructureBuilder` orquesta Factory -> Prototype -> Composite y genera el archivo JSON final.
 
-> **Entregable fase 1**: Documentocon fragmentos de código destacados, explicación de cada patrón y un diagrama UML simplificado.
+1. **CompositeModule como contenedor**
+
+    `self.module = CompositeModule()` crea un módulo que luego agregará todos los bloques.
+
+2. **Factory**
+
+    `NullResourceFactory.create("app")` devuelve el bloque JSON mínimo para un `null_resource "app"` con sus triggers.
+
+3. **Prototype**
+
+    `ResourcePrototype(base)` envuelve el bloque de fábrica para poder clonarlo sin alterar el original.
+
+4. **Clonado y mutación**
+    En el bucle:
+
+    `proto.clone(mutator)` hace un deep copy de base.
+
+    `mutator` renombra la clave `"app"` a `"app_{i}"`, dejando cada recurso con un nombre único.
+
+5. **Composite**
+    `self.module.add(...)` acumula cada copia en la lista interna de `CompositeModule`.
+
+6. **Export**
+    Al llamar `builder.export()`, todos los bloques añadidos se fusionan en un único JSON válido para Terraform y se escriben en `terraform/main.tf.json`.
+
+Con este flujo, Builder orquesta los tres patrones:
+
+- Factory genera el bloque base.
+
+- Prototype permite múltiples instancias independientes a partir de ese bloque.
+
+- Composite agrupa todas esas instancias en un único archivo de salida.
+
+![Diagrama de patron Builder](./Imagenes/uml-builder.jpg)
+
+- InfrastructureBuilder depende de NullResourceFactory (para crear bloques), de ResourcePrototype (para clonarlos) y contiene un CompositeModule (para agregarlos todos).
+
+- Así se visualiza cómo Builder orquesta los tres patrones y produce el JSON final.
+
+> **Entregable fase 1**: Documento con fragmentos de código destacados, explicación de cada patrón y un diagrama UML simplificado.
 
 
 #### Fase 2: Ejercicios prácticos 
